@@ -24,6 +24,9 @@
           <div><span>THROTTLE</span><strong id="hud-throttle">38%</strong></div>
           <div><span>AIRSPEED</span><strong id="hud-speed">0 KT</strong></div>
           <div><span>ALTITUDE</span><strong id="hud-altitude">0 M</strong></div>
+          <div><span>VERT SPEED</span><strong id="hud-vertical-speed">+0.0 M/S</strong></div>
+          <div><span>LOAD</span><strong id="hud-g-load">1.0 G</strong></div>
+          <div><span>CAMERA</span><strong id="hud-camera">CHASE</strong></div>
         </div>
 
         <div class="mechanism-card">
@@ -37,7 +40,7 @@
 
         <div class="desktop-help">
           <p><kbd>W</kbd><kbd>S</kbd> throttle &nbsp; <kbd>A</kbd><kbd>D</kbd> yaw &nbsp; <kbd>↑</kbd><kbd>↓</kbd> pitch &nbsp; <kbd>←</kbd><kbd>→</kbd> roll</p>
-          <p><kbd>V</kbd> vector mode &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>I</kbd> inspection &nbsp; <kbd>R</kbd> reset</p>
+          <p><kbd>V</kbd> vector mode &nbsp; <kbd>C</kbd> chase / cockpit / inspect &nbsp; <kbd>I</kbd> inspection &nbsp; <kbd>R</kbd> reset</p>
         </div>
 
         <div id="debug-panel" class="debug-panel" hidden>
@@ -71,7 +74,7 @@
           <h2>Fly the vector.</h2>
           <p>Shift the nozzle from level thrust to a full hover, then watch every bearing ring and exterior drive respond.</p>
           <button id="start-button" type="button">ENTER FLIGHT RANGE</button>
-          <small>Desktop: keyboard + drag to look &nbsp;·&nbsp; Mobile: twin sticks + controls</small>
+          <small>Desktop: keyboard + drag to look · C cycles chase, cockpit, and inspection · Mobile: twin sticks + controls</small>
         </div>
       </section>
     </main>

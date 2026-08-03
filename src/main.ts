@@ -5,6 +5,15 @@ import { InputController } from "./input";
 import { JetRig } from "./jet";
 import { SceneRegistry } from "./sceneReport";
 
+type CameraMode = "chase" | "cockpit" | "inspection";
+
+const CAMERA_MODES: readonly CameraMode[] = ["chase", "cockpit", "inspection"];
+const CAMERA_LABELS: Record<CameraMode, string> = {
+  chase: "CHASE",
+  cockpit: "COCKPIT",
+  inspection: "INSPECT",
+};
+
 declare global {
   interface Window {
     __VECTOR35__?: {
@@ -15,6 +24,8 @@ declare global {
       sceneReport: () => ReturnType<SceneRegistry["report"]>;
       reportText: () => string;
       step: (dt?: number) => void;
+      cameraMode: () => CameraMode;
+      setCameraMode: (mode: CameraMode) => void;
     };
   }
 }
@@ -52,20 +63,29 @@ const hud = {
   throttle: requireElement("hud-throttle"),
   speed: requireElement("hud-speed"),
   altitude: requireElement("hud-altitude"),
+  verticalSpeed: requireElement("hud-vertical-speed"),
+  gLoad: requireElement("hud-g-load"),
+  camera: requireElement("hud-camera"),
   mechanism: requireElement("hud-mechanism"),
   debugPanel: requireElement("debug-panel"),
   debugOutput: requireElement("debug-output"),
   inspectionButton: requireElement("inspection-button"),
 };
 
-let cameraMode = 0;
+let cameraMode: CameraMode = "chase";
 let orbitYaw = 0;
 let orbitPitch = 0.17;
+let chaseYaw = 0;
+let cockpitYaw = 0;
+let cockpitPitch = 0;
+let cameraInitialized = false;
 const cameraTarget = new THREE.Vector3();
 const desiredCameraPosition = new THREE.Vector3();
 const desiredLookTarget = new THREE.Vector3();
 const lookQuaternion = new THREE.Quaternion();
 const lookOffset = new THREE.Vector3();
+const yawQuaternion = new THREE.Quaternion();
+const cameraForward = new THREE.Vector3();
 const clock = new THREE.Clock();
 let latestReport = registry.report();
 let nextReportRefresh = performance.now() + 750;
@@ -84,6 +104,9 @@ function updateHud(): void {
   hud.throttle.textContent = `${Math.round(telemetry.throttle * 100)}%`;
   hud.speed.textContent = `${Math.round(telemetry.speedKnots)} KT`;
   hud.altitude.textContent = `${Math.round(telemetry.altitudeM)} M`;
+  hud.verticalSpeed.textContent = `${formatSigned(telemetry.verticalSpeedMps)} M/S`;
+  hud.gLoad.textContent = `${telemetry.gLoad.toFixed(1)} G`;
+  hud.camera.textContent = CAMERA_LABELS[cameraMode];
   hud.mechanism.textContent = telemetry.nozzleAngleDeg < 3
     ? "3 bearing rings synchronized · nozzle locked aft"
     : telemetry.nozzleAngleDeg > 82
@@ -108,32 +131,67 @@ function refreshReport(force = false): ReturnType<SceneRegistry["report"]> {
   return latestReport;
 }
 
+function formatSigned(value: number): string {
+  const rounded = Math.abs(value) < 0.05 ? 0 : value;
+  return `${rounded >= 0 ? "+" : ""}${rounded.toFixed(1)}`;
+}
+
+function setCameraMode(mode: CameraMode): void {
+  cameraMode = mode;
+  jet.setCockpitView(mode === "cockpit");
+}
+
+function cycleCameraMode(): void {
+  const current = CAMERA_MODES.indexOf(cameraMode);
+  setCameraMode(CAMERA_MODES[(current + 1) % CAMERA_MODES.length]);
+}
+
 function updateCamera(dt: number): void {
   const look = input.consumeLook();
-  orbitYaw -= look.x * (window.innerWidth < 720 ? 0.0052 : 0.0024);
-  orbitPitch = THREE.MathUtils.clamp(orbitPitch - look.y * (window.innerWidth < 720 ? 0.0052 : 0.0024), -0.42, 0.72);
-
-  const state = jet.orientation;
-  const yawOnly = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, state.yaw, 0, "YXZ"));
+  const lookSensitivity = window.innerWidth < 720 ? 0.0052 : 0.0024;
   const target = jet.group.position;
-  if (cameraMode === 0) {
-    lookQuaternion.setFromEuler(new THREE.Euler(orbitPitch, orbitYaw, 0, "YXZ"));
-    lookOffset.set(0, 3.1, 11.6).applyQuaternion(lookQuaternion).applyQuaternion(yawOnly);
+
+  if (cameraMode === "cockpit") {
+    cockpitYaw = THREE.MathUtils.clamp(cockpitYaw - look.x * lookSensitivity, -1.35, 1.35);
+    cockpitPitch = THREE.MathUtils.clamp(cockpitPitch - look.y * lookSensitivity, -0.8, 0.68);
+    jet.getCockpitPosition(camera.position);
+    lookQuaternion.setFromEuler(new THREE.Euler(cockpitPitch, cockpitYaw, 0, "YXZ"));
+    camera.quaternion.copy(jet.group.quaternion).multiply(lookQuaternion);
+    camera.fov = dampNumber(camera.fov, 78, 7, dt);
+    camera.updateProjectionMatrix();
+    cameraForward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    cameraTarget.copy(camera.position).addScaledVector(cameraForward, 50);
+    return;
+  }
+
+  orbitYaw -= look.x * lookSensitivity;
+  orbitPitch = THREE.MathUtils.clamp(orbitPitch - look.y * lookSensitivity, -0.48, 0.72);
+  if (cameraMode === "chase") {
+    chaseYaw = dampAngle(chaseYaw, jet.orientation.yaw + orbitYaw, 3.6, dt);
+    yawQuaternion.setFromEuler(new THREE.Euler(0, chaseYaw, 0, "YXZ"));
+    lookQuaternion.setFromEuler(new THREE.Euler(orbitPitch, chaseYaw, 0, "YXZ"));
+    lookOffset.set(0, 5.2, 16.5).applyQuaternion(lookQuaternion);
     desiredCameraPosition.copy(target).add(lookOffset);
-    desiredLookTarget.copy(target).add(new THREE.Vector3(0, 0.3, -4.2).applyQuaternion(yawOnly));
+    cameraForward.set(0, 0, -1).applyQuaternion(yawQuaternion);
+    desiredLookTarget.copy(target).addScaledVector(cameraForward, 4.2).addScaledVector(jet.velocity, 0.12);
+    environment.constrainCamera(desiredLookTarget, desiredCameraPosition);
     camera.fov = dampNumber(camera.fov, 72 + Math.min(9, jet.velocity.length() * 0.15), 6, dt);
-  } else if (cameraMode === 1) {
-    desiredCameraPosition.copy(new THREE.Vector3(0, 0.98, -3.85).applyQuaternion(jet.group.quaternion).add(target));
-    desiredLookTarget.copy(new THREE.Vector3(0, 0.55, -25).applyQuaternion(jet.group.quaternion).add(target));
-    camera.fov = dampNumber(camera.fov, 82, 6, dt);
   } else {
     const inspectionAngle = performance.now() * 0.00011;
     desiredCameraPosition.set(Math.sin(inspectionAngle) * 14, 6.4, Math.cos(inspectionAngle) * 14).add(target);
-    desiredLookTarget.copy(target).add(new THREE.Vector3(0, -0.15, 2.2).applyQuaternion(yawOnly));
+    desiredLookTarget.copy(target);
+    environment.constrainCamera(desiredLookTarget, desiredCameraPosition);
     camera.fov = dampNumber(camera.fov, 62, 6, dt);
   }
-  cameraTarget.lerp(desiredLookTarget, 1 - Math.exp(-10 * dt));
-  camera.position.lerp(desiredCameraPosition, 1 - Math.exp(-5.5 * dt));
+
+  if (!cameraInitialized) {
+    camera.position.copy(desiredCameraPosition);
+    cameraTarget.copy(desiredLookTarget);
+    cameraInitialized = true;
+  } else {
+    dampVector(cameraTarget, desiredLookTarget, 10, dt);
+    dampVector(camera.position, desiredCameraPosition, 5.2, dt);
+  }
   camera.fov = Math.min(90, Math.max(55, camera.fov));
   camera.updateProjectionMatrix();
   camera.lookAt(cameraTarget);
@@ -143,10 +201,21 @@ function dampNumber(current: number, target: number, lambda: number, dt: number)
   return THREE.MathUtils.damp(current, target, lambda, dt);
 }
 
+function dampVector(current: THREE.Vector3, target: THREE.Vector3, lambda: number, dt: number): void {
+  current.x = dampNumber(current.x, target.x, lambda, dt);
+  current.y = dampNumber(current.y, target.y, lambda, dt);
+  current.z = dampNumber(current.z, target.z, lambda, dt);
+}
+
+function dampAngle(current: number, target: number, lambda: number, dt: number): number {
+  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + delta * (1 - Math.exp(-lambda * dt));
+}
+
 function step(dt: number): void {
   const events = input.consumeEvents();
   if (events.toggleVtol) jet.toggleVtol();
-  if (events.toggleCamera) cameraMode = (cameraMode + 1) % 3;
+  if (events.toggleCamera) cycleCameraMode();
   if (events.toggleInspection) toggleInspection();
   if (events.reset) jet.reset();
   jet.update(dt, input.read());
@@ -188,6 +257,8 @@ if (import.meta.env.DEV) {
     sceneReport: () => registry.report(),
     reportText: () => registry.reportText(),
     step: (dt = 1 / 60) => step(dt),
+    cameraMode: () => cameraMode,
+    setCameraMode,
   };
 }
 

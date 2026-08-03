@@ -7,9 +7,9 @@ A mobile- and desktop-friendly Three.js flight demonstrator built around an arti
 - Flyable stealth-fighter-inspired airframe built from procedural Three.js geometry
 - Three sequential bearing pivots that bend the exhaust from aft thrust to near-vertical hover thrust
 - Visible turbine, color-coded duct sections, gear rings, actuator housings, conduit runs, bolt rings, and petal exhaust exit
-- Kinematic forward-flight and hover transition with third-person, cockpit, and inspection camera modes
+- Inertial forward-flight and hover transition with a stabilized chase camera, cockpit-mounted first-person view, and inspection camera
 - Touch-safe twin-stick mobile input and keyboard/mouse desktop input
-- Procedural test deck, ocean, sky, cloud field, tracked shadow lighting, material roughness variation, panels, seams, and independent trim components
+- Procedural test deck, ocean, sky, cloud field, tracked shadow lighting, material roughness variation, panels, seams, animated control surfaces, cockpit instruments, and independent trim components
 - Built-in inspection report exposed in development as `window.__VECTOR35__`
 
 ## Controls
@@ -20,12 +20,14 @@ A mobile- and desktop-friendly Three.js flight demonstrator built around an arti
 | `A` / `D` | Yaw |
 | Arrow keys | Pitch / roll |
 | `V` | Toggle forward / hover vectoring |
-| `C` | Cycle chase, cockpit, and inspection cameras |
+| `C` | Cycle stabilized chase, first-person cockpit, and inspection cameras |
 | `I` | Open the scene inspection report |
 | `R` | Reset the aircraft |
-| Drag | Look around in chase view |
+| Drag | Look around in chase or cockpit view |
 
 Mobile uses the left stick for throttle/yaw, the right stick for pitch/roll, and the center controls for vectoring, camera, and reset.
+
+The chase camera follows aircraft heading with damped recovery, ignores roll/pitch coupling, and raycasts against the test deck to avoid clipping. The cockpit camera is fixed to the pilot eye point and supports independent head-look.
 
 ## Run locally
 
