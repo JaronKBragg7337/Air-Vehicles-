@@ -31,6 +31,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function applyDeadzone(value: number, threshold = 0.12): number {
+  const magnitude = Math.abs(value);
+  if (magnitude <= threshold) return 0;
+  return Math.sign(value) * (magnitude - threshold) / (1 - threshold);
+}
+
 export class InputController {
   private readonly keys = new Set<string>();
   private readonly sticks: Record<StickName, StickState>;
@@ -162,10 +168,10 @@ export class InputController {
 
   read(): FlightInput {
     const key = (positive: string, negative: string): number => Number(this.keys.has(positive)) - Number(this.keys.has(negative));
-    const throttleRate = key("KeyW", "KeyS") + -this.sticks.throttle.y;
-    const yaw = key("KeyD", "KeyA") + this.sticks.throttle.x;
-    const pitch = key("ArrowUp", "ArrowDown") + -this.sticks.attitude.y;
-    const roll = key("ArrowRight", "ArrowLeft") + this.sticks.attitude.x;
+    const throttleRate = key("KeyW", "KeyS") + -applyDeadzone(this.sticks.throttle.y);
+    const yaw = key("KeyD", "KeyA") + applyDeadzone(this.sticks.throttle.x);
+    const pitch = key("ArrowUp", "ArrowDown") + -applyDeadzone(this.sticks.attitude.y);
+    const roll = key("ArrowRight", "ArrowLeft") + applyDeadzone(this.sticks.attitude.x);
     return {
       throttleRate: clamp(throttleRate, -1, 1),
       yaw: clamp(yaw, -1, 1),

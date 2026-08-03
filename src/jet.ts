@@ -13,12 +13,32 @@ export interface FlightTelemetry {
   nozzleAngleDeg: number;
   speedKnots: number;
   altitudeM: number;
+  verticalSpeedMps: number;
+  gLoad: number;
   vtol: boolean;
 }
 
 interface NozzleDrive {
   gear: THREE.Object3D;
   phase: number;
+}
+
+interface WingAssembly {
+  group: THREE.Group;
+  flap: THREE.Mesh;
+  side: -1 | 1;
+}
+
+interface TailplaneAssembly {
+  group: THREE.Group;
+  stabilizer: THREE.Mesh;
+}
+
+interface CockpitInstruments {
+  group: THREE.Group;
+  throttleNeedle: THREE.Mesh;
+  vectorNeedle: THREE.Mesh;
+  speedNeedle: THREE.Mesh;
 }
 
 const MAT = {
@@ -170,7 +190,7 @@ function createFuselage(): THREE.Group {
   return group;
 }
 
-function createWing(side: -1 | 1): THREE.Group {
+function createWing(side: -1 | 1): WingAssembly {
   const group = new THREE.Group();
   const points: Array<[number, number]> = side === 1
     ? [[0.38, -1.8], [5.38, -0.1], [4.78, 3.1], [0.52, 3.75]]
@@ -196,10 +216,10 @@ function createWing(side: -1 | 1): THREE.Group {
   for (const x of [1.55, 2.45, 3.35]) {
     addPanelSeam(group, [new THREE.Vector3(side * x, 0.11, 0.2), new THREE.Vector3(side * (x + 0.3), 0.11, 2.8)]);
   }
-  return group;
+  return { group, flap, side };
 }
 
-function createTailplane(side: -1 | 1): THREE.Group {
+function createTailplane(side: -1 | 1): TailplaneAssembly {
   const group = new THREE.Group();
   const points: Array<[number, number]> = side === 1
     ? [[0.42, 3.55], [3.05, 4.4], [2.72, 6.05], [0.42, 5.35]]
@@ -208,7 +228,7 @@ function createTailplane(side: -1 | 1): THREE.Group {
   stabilizer.castShadow = true;
   group.add(stabilizer);
   addPanelSeam(group, [new THREE.Vector3(side * 0.56, 0.09, 4.7), new THREE.Vector3(side * 2.74, 0.09, 5.54)], 0x727d86);
-  return group;
+  return { group, stabilizer };
 }
 
 function createFin(side: -1 | 1): THREE.Group {
@@ -262,6 +282,45 @@ function createCanopy(): THREE.Group {
     canopy.add(arch);
   }
   return canopy;
+}
+
+function createCockpitInterior(): CockpitInstruments {
+  const group = new THREE.Group();
+  group.name = "cockpit-interior";
+
+  const dashboard = bevelBox(1.72, 0.28, 0.36, 0.05, MAT.bodyDark);
+  dashboard.position.set(0, 0.55, -4.9);
+  dashboard.rotation.x = -0.12;
+  group.add(dashboard);
+
+  const glareShield = bevelBox(1.45, 0.08, 0.22, 0.03, MAT.rubber);
+  glareShield.position.set(0, 0.88, -4.86);
+  group.add(glareShield);
+
+  const addGauge = (x: number, color: THREE.ColorRepresentation): THREE.Mesh => {
+    const gauge = new THREE.Group();
+    gauge.position.set(x, 0.72, -4.73);
+    const dial = new THREE.Mesh(new THREE.CircleGeometry(0.17, 24), MAT.panel);
+    const bezel = new THREE.Mesh(new THREE.RingGeometry(0.175, 0.205, 24), MAT.silver);
+    bezel.position.z = 0.005;
+    const needle = new THREE.Mesh(
+      new THREE.BoxGeometry(0.018, 0.13, 0.018),
+      new THREE.MeshBasicMaterial({ color }),
+    );
+    needle.position.set(0, 0.045, 0.02);
+    needle.rotation.z = -0.78;
+    gauge.add(dial, bezel, needle);
+    group.add(gauge);
+    return needle;
+  };
+
+  const throttleNeedle = addGauge(-0.48, 0x65c7ff);
+  const vectorNeedle = addGauge(0, 0xffbd67);
+  const speedNeedle = addGauge(0.48, 0x70edb0);
+
+  const stick = rodBetween(new THREE.Vector3(0, 0.25, -3.58), new THREE.Vector3(0, 0.53, -3.72), 0.035, MAT.bodyLight);
+  group.add(stick);
+  return { group, throttleNeedle, vectorNeedle, speedNeedle };
 }
 
 function createLandingGear(): THREE.Group {
@@ -497,11 +556,11 @@ class ThreeBearingNozzle {
     });
   }
 
-  update(dt: number, throttle: number): void {
+  update(dt: number, throttle: number, boost = false): void {
     this.turbine.rotation.z += dt * (4 + throttle * 48);
     const pulse = 0.94 + Math.sin(performance.now() * 0.016) * 0.035;
-    const scale = (0.18 + throttle * 0.92) * pulse;
-    this.flame.scale.set(scale, scale, Math.max(0.12, throttle * 1.08));
+    const scale = (0.18 + throttle * (boost ? 1.12 : 0.92)) * pulse;
+    this.flame.scale.set(scale, scale, Math.max(0.12, throttle * (boost ? 1.4 : 1.08)));
     this.flame.visible = throttle > 0.05;
   }
 }
@@ -511,23 +570,46 @@ export class JetRig {
   readonly velocity = new THREE.Vector3();
   readonly nozzle = new ThreeBearingNozzle();
   private readonly landingGear = createLandingGear();
+  private readonly canopy = createCanopy();
+  private readonly cockpit = createCockpitInterior();
+  private readonly ailerons: WingAssembly[] = [];
+  private readonly elevators: TailplaneAssembly[] = [];
+  private readonly forwardAxis = new THREE.Vector3();
+  private readonly upAxis = new THREE.Vector3();
+  private readonly rightAxis = new THREE.Vector3();
+  private readonly thrustAxis = new THREE.Vector3();
+  private readonly inverseOrientation = new THREE.Quaternion();
+  private readonly localVelocity = new THREE.Vector3();
   private throttle = 0.38;
+  private throttleTarget = 0.38;
   private nozzleAngle = 0;
   private nozzleTarget = 0;
   private yaw = 0;
   private pitch = 0;
   private roll = 0;
+  private yawRate = 0;
+  private pitchRate = 0;
+  private rollRate = 0;
+  private verticalSpeed = 0;
+  private gLoad = 1;
   private isVtol = false;
 
   constructor() {
     this.group.name = "vector-35-aircraft";
     this.group.position.set(0, 10, 14);
     this.group.add(createFuselage());
-    this.group.add(createWing(1), createWing(-1));
-    this.group.add(createTailplane(1), createTailplane(-1));
+    const rightWing = createWing(1);
+    const leftWing = createWing(-1);
+    this.ailerons.push(rightWing, leftWing);
+    this.group.add(rightWing.group, leftWing.group);
+    const rightTailplane = createTailplane(1);
+    const leftTailplane = createTailplane(-1);
+    this.elevators.push(rightTailplane, leftTailplane);
+    this.group.add(rightTailplane.group, leftTailplane.group);
     this.group.add(createFin(1), createFin(-1));
     this.group.add(createIntake(1), createIntake(-1));
-    this.group.add(createCanopy());
+    this.group.add(this.canopy);
+    this.group.add(this.cockpit.group);
 
     const spine = bevelBox(0.42, 0.18, 5.1, 0.05, MAT.panel);
     spine.position.set(0, 1.0, 1.1);
@@ -557,12 +639,22 @@ export class JetRig {
       nozzleAngleDeg: THREE.MathUtils.radToDeg(this.nozzleAngle),
       speedKnots: this.velocity.length() * 1.94384,
       altitudeM: Math.max(0, this.group.position.y - 1.62),
+      verticalSpeedMps: this.verticalSpeed,
+      gLoad: this.gLoad,
       vtol: this.isVtol,
     };
   }
 
   get orientation(): { yaw: number; pitch: number; roll: number } {
     return { yaw: this.yaw, pitch: this.pitch, roll: this.roll };
+  }
+
+  getCockpitPosition(target: THREE.Vector3): THREE.Vector3 {
+    return target.set(0, 0.94, -3.58).applyQuaternion(this.group.quaternion).add(this.group.position);
+  }
+
+  setCockpitView(active: boolean): void {
+    this.canopy.visible = !active;
   }
 
   toggleVtol(): void {
@@ -574,53 +666,106 @@ export class JetRig {
     this.group.position.set(0, 10, 14);
     this.velocity.set(0, 0, 0);
     this.throttle = 0.38;
+    this.throttleTarget = 0.38;
     this.yaw = 0;
     this.pitch = 0;
     this.roll = 0;
+    this.yawRate = 0;
+    this.pitchRate = 0;
+    this.rollRate = 0;
+    this.verticalSpeed = 0;
+    this.gLoad = 1;
     this.isVtol = false;
     this.nozzleTarget = 0;
     this.nozzleAngle = 0;
+    this.ailerons.forEach(({ flap }) => { flap.rotation.x = 0; });
+    this.elevators.forEach(({ stabilizer }) => { stabilizer.rotation.x = 0; });
+    this.cockpit.throttleNeedle.rotation.z = -0.78;
+    this.cockpit.vectorNeedle.rotation.z = -0.78;
+    this.cockpit.speedNeedle.rotation.z = -0.78;
     this.applyOrientation();
   }
 
   update(dt: number, input: FlightInput): void {
-    this.throttle = THREE.MathUtils.clamp(this.throttle + input.throttleRate * dt * 0.36, 0, 1);
-    const yawRate = 1.05 * (0.25 + this.throttle * 0.75);
-    this.yaw += input.yaw * yawRate * dt;
-    this.pitch = THREE.MathUtils.clamp(this.pitch + input.pitch * 0.78 * dt, -1.05, 0.78);
-    this.roll = THREE.MathUtils.clamp(this.roll + input.roll * 1.12 * dt, -1.28, 1.28);
-    if (Math.abs(input.roll) < 0.03) this.roll = damp(this.roll, 0, 0.65, dt);
-    if (Math.abs(input.pitch) < 0.03) this.pitch = damp(this.pitch, 0, 0.14, dt);
+    this.throttleTarget = THREE.MathUtils.clamp(this.throttleTarget + input.throttleRate * dt * 0.36, 0, 1);
+    this.throttle = damp(this.throttle, this.throttleTarget, 1.9, dt);
+
+    const forwardBeforeTurn = this.forwardAxis.set(0, 0, -1).applyQuaternion(this.group.quaternion).normalize();
+    const forwardSpeedBeforeTurn = Math.max(0, this.velocity.dot(forwardBeforeTurn));
+    const speedAuthority = THREE.MathUtils.smoothstep(forwardSpeedBeforeTurn, 4, 46);
+    const hoverAuthority = this.isVtol ? 1 : 0.22 + speedAuthority * 0.78;
+    this.yawRate = damp(this.yawRate, input.yaw * 0.98 * hoverAuthority, 5.2, dt);
+    this.pitchRate = damp(this.pitchRate, input.pitch * 0.82 * hoverAuthority, 5.5, dt);
+    this.rollRate = damp(this.rollRate, input.roll * 1.18 * hoverAuthority, 5.8, dt);
+    this.yaw -= this.yawRate * dt;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + this.pitchRate * dt, -1.02, 0.72);
+    this.roll = THREE.MathUtils.clamp(this.roll - this.rollRate * dt, -1.18, 1.18);
+    if (Math.abs(input.roll) < 0.03) this.roll = damp(this.roll, 0, 0.45 + speedAuthority * 0.65, dt);
+    if (Math.abs(input.pitch) < 0.03) this.pitch = damp(this.pitch, 0, 0.08 + speedAuthority * 0.12, dt);
     this.applyOrientation();
+    this.updateControlSurfaces(dt, input);
 
     this.nozzleAngle = damp(this.nozzleAngle, this.nozzleTarget, 2.2, dt);
     this.nozzle.setVectorAngle(this.nozzleAngle);
-    this.nozzle.update(dt, this.throttle);
+    this.nozzle.update(dt, this.throttle, input.boost);
     this.landingGear.visible = this.isVtol || this.group.position.y < 3.2;
 
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.group.quaternion).normalize();
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.group.quaternion).normalize();
-    const thrustDirection = forward.multiplyScalar(Math.cos(this.nozzleAngle)).addScaledVector(up, Math.sin(this.nozzleAngle)).normalize();
-    const engineAcceleration = (31 + (input.boost ? 7.5 : 0)) * this.throttle;
+    const forward = this.forwardAxis.set(0, 0, -1).applyQuaternion(this.group.quaternion).normalize();
+    const up = this.upAxis.set(0, 1, 0).applyQuaternion(this.group.quaternion).normalize();
+    const right = this.rightAxis.set(1, 0, 0).applyQuaternion(this.group.quaternion).normalize();
+    const thrustDirection = this.thrustAxis.copy(forward)
+      .multiplyScalar(Math.cos(this.nozzleAngle))
+      .addScaledVector(up, Math.sin(this.nozzleAngle))
+      .normalize();
+    const engineAcceleration = (31 + (input.boost ? 12 : 0)) * this.throttle;
     this.velocity.addScaledVector(thrustDirection, engineAcceleration * dt);
 
-    const forwardSpeed = this.velocity.dot(forward);
-    if (forwardSpeed > 12 && this.nozzleAngle < 0.8) {
-      const lift = Math.min(13, forwardSpeed * forwardSpeed * 0.00155) * Math.cos(this.nozzleAngle);
+    const forwardSpeed = Math.max(0, this.velocity.dot(forward));
+    let lift = 0;
+    if (forwardSpeed > 6 && this.nozzleAngle < 1.1) {
+      lift = Math.min(20, forwardSpeed * forwardSpeed * 0.0063) * Math.cos(this.nozzleAngle);
       this.velocity.addScaledVector(up, lift * dt);
     }
+
+    this.localVelocity.copy(this.velocity).applyQuaternion(this.inverseOrientation.copy(this.group.quaternion).invert());
+    const sideSlip = this.localVelocity.x;
+    this.velocity.addScaledVector(right, -sideSlip * (0.55 + speedAuthority * 2.6) * dt);
     this.velocity.y -= 9.81 * dt;
-    const drag = 0.017 + (this.nozzleAngle > 0.5 ? 0.035 : 0);
+    const airspeed = this.velocity.length();
+    const drag = 0.0045 + airspeed * 0.00165 + lift * 0.00075 + (this.nozzleAngle > 0.5 ? 0.018 : 0);
     this.velocity.multiplyScalar(Math.exp(-drag * dt));
     this.group.position.addScaledVector(this.velocity, dt);
 
     const groundLevel = 1.62;
+    let onGround = false;
     if (this.group.position.y < groundLevel) {
+      onGround = true;
       this.group.position.y = groundLevel;
-      this.velocity.y = Math.max(0, this.velocity.y) * 0.2;
-      this.velocity.x *= 0.89;
-      this.velocity.z *= 0.89;
+      if (this.velocity.y < 0) this.velocity.y = 0;
+      const groundFriction = this.isVtol ? 0.7 : 1.65;
+      this.velocity.x *= Math.exp(-groundFriction * dt);
+      this.velocity.z *= Math.exp(-groundFriction * dt);
     }
+    this.verticalSpeed = this.velocity.y;
+    this.gLoad = THREE.MathUtils.clamp((lift + engineAcceleration * Math.sin(this.nozzleAngle)) / 9.81, 0, 5.5);
+    if (onGround) this.gLoad = Math.max(1, this.gLoad);
+    this.updateCockpitInstruments(airspeed * 1.94384, dt);
+  }
+
+  private updateControlSurfaces(dt: number, input: FlightInput): void {
+    this.ailerons.forEach(({ flap, side }) => {
+      const deflection = input.pitch * 0.11 + input.roll * side * 0.25;
+      flap.rotation.x = damp(flap.rotation.x, deflection, 8, dt);
+    });
+    this.elevators.forEach(({ stabilizer }) => {
+      stabilizer.rotation.x = damp(stabilizer.rotation.x, input.pitch * 0.18, 8, dt);
+    });
+  }
+
+  private updateCockpitInstruments(speedKnots: number, dt: number): void {
+    this.cockpit.throttleNeedle.rotation.z = damp(this.cockpit.throttleNeedle.rotation.z, -0.78 + this.throttle * 1.56, 8, dt);
+    this.cockpit.vectorNeedle.rotation.z = damp(this.cockpit.vectorNeedle.rotation.z, -0.78 + (this.nozzleAngle / (Math.PI / 2)) * 1.56, 8, dt);
+    this.cockpit.speedNeedle.rotation.z = damp(this.cockpit.speedNeedle.rotation.z, -0.78 + THREE.MathUtils.clamp(speedKnots / 240, 0, 1) * 1.56, 5, dt);
   }
 
   private applyOrientation(): void {

@@ -41,6 +41,8 @@ export class EnvironmentRig {
   readonly sunTarget = new THREE.Object3D();
   private readonly sea = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600, 1, 1), oceanMaterial);
   private readonly deck = new THREE.Group();
+  private readonly cameraObstacles: THREE.Object3D[] = [];
+  private readonly cameraRaycaster = new THREE.Raycaster();
 
   constructor() {
     this.group.name = "test-range-environment";
@@ -89,6 +91,7 @@ export class EnvironmentRig {
     const edgeRight = edgeLeft.clone();
     edgeRight.position.x = 23.78;
     this.deck.add(edgeLeft, edgeRight);
+    this.cameraObstacles.push(slab, edgeLeft, edgeRight);
 
     for (let z = -67; z <= 67; z += 8) {
       this.deck.add(makeDeckMarking(0.18, 4.6, 0, z, 0xe8b54c));
@@ -152,5 +155,20 @@ export class EnvironmentRig {
       Math.round((subject.z - 22) / snap) * snap,
     );
     this.sunTarget.updateMatrixWorld();
+  }
+
+  constrainCamera(subject: THREE.Vector3, desired: THREE.Vector3, margin = 0.24): THREE.Vector3 {
+    const direction = desired.clone().sub(subject);
+    const distance = direction.length();
+    if (distance > 0.001) {
+      direction.multiplyScalar(1 / distance);
+      this.cameraRaycaster.set(subject, direction);
+      this.cameraRaycaster.near = 0.05;
+      this.cameraRaycaster.far = distance;
+      const hit = this.cameraRaycaster.intersectObjects(this.cameraObstacles, true)[0];
+      if (hit) desired.copy(subject).addScaledVector(direction, Math.max(0.65, hit.distance - margin));
+    }
+    desired.y = Math.max(desired.y, this.sea.position.y + 0.34);
+    return desired;
   }
 }
