@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#07111c" />
+    <meta name="description" content="A flyable Three.js VTOL demonstrator with an articulated three-bearing swivel nozzle." />
+    <title>Vector 35 | VTOL Range</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="flight-canvas" aria-label="Vector 35 VTOL flight range"></canvas>
+
+      <section id="hud" aria-live="polite">
+        <div class="brand-block">
+          <p class="eyebrow">FLIGHT SYSTEMS // EXPERIMENTAL</p>
+          <h1>VECTOR <span>35</span></h1>
+          <p class="subhead">3-bearing vectored-thrust demonstrator</p>
+        </div>
+
+        <div class="telemetry-card">
+          <div><span>MODE</span><strong id="hud-mode">FORWARD</strong></div>
+          <div><span>VECTOR</span><strong id="hud-vector">0°</strong></div>
+          <div><span>THROTTLE</span><strong id="hud-throttle">38%</strong></div>
+          <div><span>AIRSPEED</span><strong id="hud-speed">0 KT</strong></div>
+          <div><span>ALTITUDE</span><strong id="hud-altitude">0 M</strong></div>
+        </div>
+
+        <div class="mechanism-card">
+          <div class="mechanism-heading">
+            <span class="status-dot"></span>
+            <span>3BSD DRIVE STATUS</span>
+          </div>
+          <div class="bearing-row"><i></i><i></i><i></i></div>
+          <p id="hud-mechanism">3 bearing rings synchronized · nozzle locked aft</p>
+        </div>
+
+        <div class="desktop-help">
+          <p><kbd>W</kbd><kbd>S</kbd> throttle &nbsp; <kbd>A</kbd><kbd>D</kbd> yaw &nbsp; <kbd>↑</kbd><kbd>↓</kbd> pitch &nbsp; <kbd>←</kbd><kbd>→</kbd> roll</p>
+          <p><kbd>V</kbd> vector mode &nbsp; <kbd>C</kbd> camera &nbsp; <kbd>I</kbd> inspection &nbsp; <kbd>R</kbd> reset</p>
+        </div>
+
+        <div id="debug-panel" class="debug-panel" hidden>
+          <div class="debug-title"><span>SCENE REPORT</span><button id="debug-close" type="button" aria-label="Close inspection panel">×</button></div>
+          <pre id="debug-output"></pre>
+        </div>
+      </section>
+
+      <section id="mobile-controls" aria-label="Flight controls">
+        <div class="stick-zone" id="throttle-stick" data-stick="throttle">
+          <span class="stick-label">THR / YAW</span>
+          <div class="stick-base"><div class="stick-knob"></div></div>
+        </div>
+        <div class="mobile-actions">
+          <button type="button" data-action="toggle-vtol">VECTOR</button>
+          <button type="button" data-action="camera">CAM</button>
+          <button type="button" data-action="reset">RESET</button>
+        </div>
+        <div class="stick-zone" id="attitude-stick" data-stick="attitude">
+          <span class="stick-label">PITCH / ROLL</span>
+          <div class="stick-base"><div class="stick-knob"></div></div>
+        </div>
+      </section>
+
+      <button id="inspection-button" class="inspection-button" type="button">INSPECT <span>0</span></button>
+      <button id="fullscreen-button" class="fullscreen-button" type="button" aria-label="Toggle fullscreen">⛶</button>
+
+      <section id="start-screen">
+        <div class="start-card">
+          <p class="eyebrow">OPEN TEST RANGE</p>
+          <h2>Fly the vector.</h2>
+          <p>Shift the nozzle from level thrust to a full hover, then watch every bearing ring and exterior drive respond.</p>
+          <button id="start-button" type="button">ENTER FLIGHT RANGE</button>
+          <small>Desktop: keyboard + drag to look &nbsp;·&nbsp; Mobile: twin sticks + controls</small>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
